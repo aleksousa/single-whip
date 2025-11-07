@@ -1,0 +1,24 @@
+# Flask and server
+flask==3.0.0
+flask-cors==4.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Pipecat - Voice AI framework
+pipecat-ai==0.0.40
+
+# WebRTC
+aiortc==1.6.0
+aiohttp==3.9.1
+
+# OpenAI
+openai==1.3.7
+
+# Audio processing
+numpy==1.26.2
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Logging
+loguru==0.7.2
