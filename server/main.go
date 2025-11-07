@@ -208,7 +208,6 @@ func connectPeers(source *Peer, destination *Peer) {
 	source.PeerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		fmt.Printf("Connecting audio relay: %s -> destination\n", track.ID())
 
-		// Read RTCP packets
 		go func() {
 			for {
 				_, _, err := receiver.ReadRTCP()
@@ -222,7 +221,6 @@ func connectPeers(source *Peer, destination *Peer) {
 			}
 		}()
 
-		// Relay RTP packets from source to destination
 		go func() {
 			for {
 				pkt, _, err := track.ReadRTP()
@@ -235,11 +233,9 @@ func connectPeers(source *Peer, destination *Peer) {
 					return
 				}
 
-				// Clean up header extensions
 				pkt.Header.Extensions = nil
 				pkt.Header.Extension = false
 
-				// Write to destination's audio track
 				if track.Kind() == webrtc.RTPCodecTypeAudio {
 					if err = destination.AudioTrack.WriteRTP(pkt); err != nil {
 						fmt.Printf("Error relaying audio: %s\n", err.Error())
