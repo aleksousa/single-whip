@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/pion/rtp"
@@ -296,59 +295,37 @@ func processListenRequest(req ListenRequest) {
 		return
 	}
 
-	var opusPackets [][]byte
-	var audioMutex sync.Mutex
-
 	peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		fmt.Printf("Receiving audio track: %s\n", track.ID())
 
 		go func() {
+			const packetsPerBatch = 150
+			var opusPackets [][]byte
+
 			for {
 				pkt, _, err := track.ReadRTP()
 				if err != nil {
-					fmt.Printf("Error reading RTP: %v\n", err)
 					return
 				}
 
-				audioMutex.Lock()
 				packetCopy := make([]byte, len(pkt.Payload))
 				copy(packetCopy, pkt.Payload)
 				opusPackets = append(opusPackets, packetCopy)
-				audioMutex.Unlock()
-			}
-		}()
 
-		go func() {
-			ticker := time.NewTicker(3 * time.Second)
-			defer ticker.Stop()
-
-			for range ticker.C {
-				audioMutex.Lock()
-				if len(opusPackets) > 0 {
-					packetsCopy := make([][]byte, len(opusPackets))
-					copy(packetsCopy, opusPackets)
-					opusPackets = nil
-					audioMutex.Unlock()
-
-					oggData := createOggOpusFile(packetsCopy)
-					fmt.Printf("Created OGG: %d bytes from %d packets\n", len(oggData), len(packetsCopy))
+				if len(opusPackets) >= packetsPerBatch {
+					oggData := createOggOpusFile(opusPackets)
+					fmt.Printf("Created OGG: %d bytes from %d packets\n", len(oggData), len(opusPackets))
 
 					if len(oggData) > 0 {
-						if err := os.WriteFile("debug_audio.ogg", oggData, 0644); err != nil {
-							fmt.Printf("Warning: Could not save debug file: %v\n", err)
-						}
-
 						text, err := speechToText(oggData)
 						if err != nil {
-							fmt.Printf("Error converting speech to text: %v\n", err)
+							fmt.Printf("Error STT: %v\n", err)
 						} else {
-							fmt.Println(text)
+							fmt.Printf("Transcription: %s\n", text)
 						}
-					} else {
-						fmt.Println("Warning: Empty OGG file created")
 					}
-				} else {
-					audioMutex.Unlock()
+
+					opusPackets = nil
 				}
 			}
 		}()
