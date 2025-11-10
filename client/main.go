@@ -351,11 +351,19 @@ func processListenRequest(req ListenRequest) {
 					oggData := createOggOpusFile(packetsCopy)
 					fmt.Printf("Created OGG: %d bytes from %d packets\n", len(oggData), len(packetsCopy))
 
-					text, err := speechToText(oggData)
-					if err != nil {
-						fmt.Printf("Error converting speech to text: %v\n", err)
+					if len(oggData) > 0 {
+						if err := os.WriteFile("debug_audio.ogg", oggData, 0644); err != nil {
+							fmt.Printf("Warning: Could not save debug file: %v\n", err)
+						}
+
+						text, err := speechToText(oggData)
+						if err != nil {
+							fmt.Printf("Error converting speech to text: %v\n", err)
+						} else {
+							fmt.Println(text)
+						}
 					} else {
-						fmt.Println(text)
+						fmt.Println("Warning: Empty OGG file created")
 					}
 				} else {
 					audioMutex.Unlock()
@@ -522,18 +530,25 @@ func createOggOpusFile(opusPackets [][]byte) []byte {
 		return nil
 	}
 
+	const samplesPerPacket = 960
+	timestamp := uint32(0)
+
 	for _, packet := range opusPackets {
 		if len(packet) == 0 {
 			continue
 		}
 
 		if err := writer.WriteRTP(&rtp.Packet{
-			Header:  rtp.Header{},
+			Header: rtp.Header{
+				Timestamp: timestamp,
+			},
 			Payload: packet,
 		}); err != nil {
 			fmt.Printf("Error writing packet to OGG: %v\n", err)
 			continue
 		}
+
+		timestamp += samplesPerPacket
 	}
 
 	if err := writer.Close(); err != nil {
