@@ -18,9 +18,9 @@ var (
 			},
 		},
 	}
+	webrtcAPI *webrtc.API
 )
 
-// Room represents a connection between two peers
 type Room struct {
 	ID    string
 	PeerA *Peer
@@ -28,13 +28,11 @@ type Room struct {
 	mutex sync.Mutex
 }
 
-// Peer represents a single connected client
 type Peer struct {
 	PeerConnection *webrtc.PeerConnection
 	AudioTrack     *webrtc.TrackLocalStaticRTP
 }
 
-// RoomManager manages all active rooms
 type RoomManager struct {
 	rooms map[string]*Room
 	mutex sync.RWMutex
@@ -45,6 +43,13 @@ var roomManager = &RoomManager{
 }
 
 func main() {
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		panic(err)
+	}
+
+	webrtcAPI = webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
+
 	http.HandleFunc("/whip", whipHandler)
 
 	fmt.Println("Server started on :8080")
@@ -61,7 +66,6 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Get room ID from query parameter
 	roomID := req.URL.Query().Get("room")
 	if roomID == "" {
 		http.Error(res, "room parameter is required", http.StatusBadRequest)
@@ -74,27 +78,13 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		panic(err)
 	}
-	// Create media engine with Opus codec
-	mediaEngine := &webrtc.MediaEngine{}
-	if err = mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "", RTCPFeedback: nil,
-		},
-		PayloadType: 97,
-	}, webrtc.RTPCodecTypeAudio); err != nil {
-		http.Error(res, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
 
-	// Create peer connection
-	peerConnection, err := api.NewPeerConnection(peerConnectionConfiguration)
+	peerConnection, err := webrtcAPI.NewPeerConnection(peerConnectionConfiguration)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Create audio track for outgoing audio
 	audioTrack, err := webrtc.NewTrackLocalStaticRTP(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
 		"audio",
@@ -105,14 +95,12 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Add track to peer connection
 	rtpSender, err := peerConnection.AddTrack(audioTrack)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Read RTCP packets
 	go func() {
 		rtcpBuf := make([]byte, 1500)
 		for {
@@ -122,20 +110,15 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 		}
 	}()
 
-	// Create peer object
 	peer := &Peer{
 		PeerConnection: peerConnection,
 		AudioTrack:     audioTrack,
 	}
 
-	// Get or create room
 	room := roomManager.getOrCreateRoom(roomID)
-
-	// Try to add peer to room
 	otherPeer := room.addPeer(peer)
 
 	if otherPeer != nil {
-		// We have two peers, connect them
 		fmt.Printf("Pairing peers in room %s\n", roomID)
 		connectPeers(peer, otherPeer)
 		connectPeers(otherPeer, peer)
@@ -143,20 +126,17 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 		fmt.Printf("Peer waiting in room %s\n", roomID)
 	}
 
-	// Handle connection state changes
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		fmt.Printf("Peer Connection State has changed: %s (Room: %s)\n", state.String(), roomID)
+		fmt.Printf("Connection state: %s (Room: %s)\n", state.String(), roomID)
 
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
 			room.removePeer(peer)
 		}
 	})
 
-	// Send answer back to client
 	writeAnswer(res, peerConnection, offer, "/whip")
 }
 
-// getOrCreateRoom gets an existing room or creates a new one
 func (rm *RoomManager) getOrCreateRoom(roomID string) *Room {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
@@ -167,46 +147,42 @@ func (rm *RoomManager) getOrCreateRoom(roomID string) *Room {
 			ID: roomID,
 		}
 		rm.rooms[roomID] = room
-		fmt.Printf("Created new room: %s\n", roomID)
+		fmt.Printf("Created room: %s\n", roomID)
 	}
 	return room
 }
 
-// addPeer adds a peer to the room and returns the other peer if one is already waiting
 func (r *Room) addPeer(peer *Peer) *Peer {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
 	if r.PeerA == nil {
 		r.PeerA = peer
-		return nil // No other peer yet
+		return nil
 	} else if r.PeerB == nil {
 		r.PeerB = peer
-		return r.PeerA // Return the first peer
+		return r.PeerA
 	}
 
-	// Room is full - this shouldn't happen with proper client logic
 	return nil
 }
 
-// removePeer removes a peer from the room
 func (r *Room) removePeer(peer *Peer) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
 	if r.PeerA == peer {
 		r.PeerA = nil
-		fmt.Printf("Peer A left room %s\n", r.ID)
+		fmt.Printf("Peer left room %s\n", r.ID)
 	} else if r.PeerB == peer {
 		r.PeerB = nil
-		fmt.Printf("Peer B left room %s\n", r.ID)
+		fmt.Printf("Peer left room %s\n", r.ID)
 	}
 }
 
-// connectPeers sets up audio relay from source to destination
 func connectPeers(source *Peer, destination *Peer) {
 	source.PeerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		fmt.Printf("Connecting audio relay: %s -> destination\n", track.ID())
+		fmt.Printf("Audio relay: %s\n", track.ID())
 
 		go func() {
 			for {
@@ -226,7 +202,6 @@ func connectPeers(source *Peer, destination *Peer) {
 				pkt, _, err := track.ReadRTP()
 				if err != nil {
 					if errors.Is(err, io.EOF) {
-						fmt.Println("Track ended")
 						return
 					}
 					fmt.Printf("RTP read error: %s\n", err.Error())
@@ -249,7 +224,7 @@ func connectPeers(source *Peer, destination *Peer) {
 
 func writeAnswer(res http.ResponseWriter, peerConnection *webrtc.PeerConnection, offer []byte, path string) {
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
-		fmt.Printf("ICE Connection State has changed: %s\n", connectionState.String())
+		fmt.Printf("ICE state: %s\n", connectionState.String())
 
 		if connectionState == webrtc.ICEConnectionStateFailed {
 			_ = peerConnection.Close()
