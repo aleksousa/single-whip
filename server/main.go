@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/pion/interceptor"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -214,13 +215,12 @@ func connectPeers(source *Peer, destination *Peer) {
 		fmt.Printf("Audio relay: %s\n", track.ID())
 
 		go func() {
+			rtcpBuf := make([]byte, 4096)
 			for {
-				_, _, err := receiver.ReadRTCP()
-				if err != nil {
+				if _, _, err := receiver.Read(rtcpBuf); err != nil {
 					if errors.Is(err, io.EOF) {
 						return
 					}
-					fmt.Printf("RTCP read error: %s\n", err.Error())
 					return
 				}
 			}
@@ -237,14 +237,31 @@ func connectPeers(source *Peer, destination *Peer) {
 					return
 				}
 
-				pkt.Header.Extensions = nil
-				pkt.Header.Extension = false
+				if track.Kind() != webrtc.RTPCodecTypeAudio {
+					continue
+				}
 
-				if track.Kind() == webrtc.RTPCodecTypeAudio {
-					if err = destination.AudioTrack.WriteRTP(pkt); err != nil {
-						fmt.Printf("Error relaying audio: %s\n", err.Error())
-						return
-					}
+				if len(pkt.Payload) == 0 {
+					continue
+				}
+
+				newPkt := &rtp.Packet{
+					Header: rtp.Header{
+						Version:        2,
+						Padding:        false,
+						Extension:      false,
+						Marker:         pkt.Header.Marker,
+						PayloadType:    pkt.Header.PayloadType,
+						SequenceNumber: pkt.Header.SequenceNumber,
+						Timestamp:      pkt.Header.Timestamp,
+						SSRC:           pkt.Header.SSRC,
+					},
+					Payload: pkt.Payload,
+				}
+
+				if err = destination.AudioTrack.WriteRTP(newPkt); err != nil {
+					fmt.Printf("Error relaying audio: %s\n", err.Error())
+					return
 				}
 			}
 		}()

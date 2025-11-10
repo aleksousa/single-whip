@@ -611,7 +611,7 @@ func sendAudioToTrack(track *webrtc.TrackLocalStaticRTP, audioData []byte) error
 				Padding:        false,
 				Extension:      false,
 				Marker:         i == len(opusPackets)-1,
-				PayloadType:    97,
+				PayloadType:    111,
 				SequenceNumber: sequenceNumber,
 				Timestamp:      timestamp,
 				SSRC:           0,
