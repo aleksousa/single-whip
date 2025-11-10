@@ -47,7 +47,16 @@ func main() {
 		panic(err)
 	}
 
-	webrtcAPI = webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
+	settingEngine := webrtc.SettingEngine{}
+
+	settingEngine.SetReceiveMTU(8192)
+
+	settingEngine.SetSRTPReplayProtectionWindow(1024)
+
+	webrtcAPI = webrtc.NewAPI(
+		webrtc.WithMediaEngine(mediaEngine),
+		webrtc.WithSettingEngine(settingEngine),
+	)
 
 	http.HandleFunc("/whip", whipHandler)
 

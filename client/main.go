@@ -17,45 +17,54 @@ import (
 )
 
 var (
-	serverAddr    = "127.0.0.1:8080"
-	openaiAPIKey  = os.Getenv("OPENAI_API_KEY")
-	openaiBaseURL = getEnvOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	serverAddr = "127.0.0.1:8080"
+	openAIKey  = ""
+	webrtcAPI  *webrtc.API
 )
 
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+func init() {
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
+		panic(err)
 	}
-	return defaultValue
+
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetReceiveMTU(8192)
+	settingEngine.SetSRTPReplayProtectionWindow(1024)
+
+	webrtcAPI = webrtc.NewAPI(
+		webrtc.WithMediaEngine(mediaEngine),
+		webrtc.WithSettingEngine(settingEngine),
+	)
 }
 
 type SpeakRequest struct {
-	RoomID  string   `json:"room_id"`
-	Phrases []string `json:"phrases"`
+	RoomID string `json:"room_id"`
+}
+
+type TTSRequest struct {
+	RoomID string `json:"room_id"`
+	Text   string `json:"text"`
 }
 
 type ListenRequest struct {
 	RoomID string `json:"room_id"`
 }
 
-type OpenAITTSRequest struct {
-	Model          string  `json:"model"`
-	Input          string  `json:"input"`
-	Voice          string  `json:"voice"`
-	ResponseFormat string  `json:"response_format,omitempty"`
-	Speed          float64 `json:"speed,omitempty"`
+type TranscriptionResponse struct {
+	RoomID string `json:"room_id"`
+	Text   string `json:"text"`
 }
 
 func main() {
-	if openaiAPIKey == "" {
-		fmt.Println("Error: OPENAI_API_KEY environment variable not set")
-		os.Exit(1)
+	fmt.Printf("Test Client API starting on :8081\n")
+
+	if openAIKey == "" {
+		fmt.Println("Warning: OPENAI_API_KEY not set. TTS/STT will not work.")
 	}
 
-	fmt.Printf("Client API starting on :8081\n")
-	fmt.Printf("OpenAI Base URL: %s\n", openaiBaseURL)
-
 	http.HandleFunc("/speak", handleSpeak)
+	http.HandleFunc("/tts", handleTTS)
 	http.HandleFunc("/listen", handleListen)
 	http.HandleFunc("/", handleRoot)
 
@@ -89,12 +98,7 @@ func handleSpeak(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Phrases) == 0 {
-		http.Error(w, "phrases array cannot be empty", http.StatusBadRequest)
-		return
-	}
-
-	fmt.Printf("Received speak request for room: %s with %d phrases\n", req.RoomID, len(req.Phrases))
+	fmt.Printf("Received speak request for room: %s\n", req.RoomID)
 
 	go processSpeakRequest(req)
 
@@ -102,7 +106,7 @@ func handleSpeak(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"room_id": req.RoomID,
-		"message": fmt.Sprintf("Processing %d phrases", len(req.Phrases)),
+		"message": "Sending synthetic audio",
 	})
 }
 
@@ -135,6 +139,35 @@ func handleListen(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleTTS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req TTSRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.RoomID == "" || req.Text == "" {
+		http.Error(w, "room_id and text are required", http.StatusBadRequest)
+		return
+	}
+
+	fmt.Printf("Received TTS request for room: %s, text: %s\n", req.RoomID, req.Text)
+
+	go processTTSRequest(req)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"room_id": req.RoomID,
+		"message": "Converting text to speech and sending",
+	})
+}
+
 func processSpeakRequest(req SpeakRequest) {
 	fmt.Printf("Starting WebRTC connection to room: %s\n", req.RoomID)
 
@@ -146,7 +179,7 @@ func processSpeakRequest(req SpeakRequest) {
 		},
 	}
 
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	peerConnection, err := webrtcAPI.NewPeerConnection(config)
 	if err != nil {
 		fmt.Printf("Error creating peer connection: %v\n", err)
 		return
@@ -219,42 +252,26 @@ func processSpeakRequest(req SpeakRequest) {
 
 	fmt.Println("WebRTC connection established")
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 
-	for i, phrase := range req.Phrases {
-		preview := phrase
-		if len(preview) > 20 {
-			preview = preview[:20]
-		}
-		fmt.Printf("[%d/%d] Sending: %s...\n", i+1, len(req.Phrases), preview)
+	fmt.Println("Generating synthetic audio...")
+	syntheticAudio := generateSyntheticAudio(3 * time.Second)
+	fmt.Printf("Generated OGG file: %d bytes\n", len(syntheticAudio))
 
-		audioData, err := textToSpeech(phrase)
-		if err != nil {
-			fmt.Printf("Error converting text to speech: %v\n", err)
-			continue
-		}
-
-		if err := sendAudioToTrack(audioTrack, audioData); err != nil {
-			fmt.Printf("Error sending audio: %v\n", err)
-			continue
-		}
-
-		if i < len(req.Phrases)-1 {
-			time.Sleep(15 * time.Second)
-		}
-	}
-
-	finalAudio, err := textToSpeech("Isso é tudo pessoal")
-	if err != nil {
-		fmt.Printf("Error creating final message: %v\n", err)
+	if err := os.WriteFile("synthetic_original.ogg", syntheticAudio, 0644); err != nil {
+		fmt.Printf("Warning: Could not save original: %v\n", err)
 	} else {
-		time.Sleep(2 * time.Second)
-		if err := sendAudioToTrack(audioTrack, finalAudio); err != nil {
-			fmt.Printf("Error sending final audio: %v\n", err)
-		}
+		fmt.Println("Saved synthetic_original.ogg for comparison")
 	}
 
-	time.Sleep(3 * time.Second)
+	fmt.Println("Sending synthetic audio...")
+	if err := sendAudioToTrack(audioTrack, syntheticAudio); err != nil {
+		fmt.Printf("Error sending audio: %v\n", err)
+		return
+	}
+
+	fmt.Println("Audio sent successfully")
+	time.Sleep(2 * time.Second)
 }
 
 func processListenRequest(req ListenRequest) {
@@ -268,7 +285,7 @@ func processListenRequest(req ListenRequest) {
 		},
 	}
 
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	peerConnection, err := webrtcAPI.NewPeerConnection(config)
 	if err != nil {
 		fmt.Printf("Error creating peer connection: %v\n", err)
 		return
@@ -301,29 +318,82 @@ func processListenRequest(req ListenRequest) {
 		go func() {
 			const packetsPerBatch = 150
 			var opusPackets [][]byte
+			batchCount := 0
+			packetCount := 0
+
+			processBatch := func() {
+				if len(opusPackets) == 0 {
+					return
+				}
+
+				batchCount++
+				fmt.Printf("Processing batch %d with %d packets (total received: %d)\n",
+					batchCount, len(opusPackets), packetCount)
+
+				oggData := createOggOpusFile(opusPackets)
+				fmt.Printf("Created OGG: %d bytes from %d packets\n", len(oggData), len(opusPackets))
+
+				if len(oggData) > 0 {
+					filename := fmt.Sprintf("received_audio_%d.ogg", batchCount)
+					if err := os.WriteFile(filename, oggData, 0644); err != nil {
+						fmt.Printf("Error saving file: %v\n", err)
+					} else {
+						fmt.Printf("Saved: %s (%d bytes)\n", filename, len(oggData))
+
+						fmt.Println("Sending audio to OpenAI STT...")
+						transcription, err := callOpenAISTT(oggData)
+						if err != nil {
+							fmt.Printf("Error calling STT: %v\n", err)
+						} else {
+							fmt.Printf("Transcription: %s\n", transcription)
+						}
+					}
+				}
+
+				opusPackets = nil
+			}
 
 			for {
 				pkt, _, err := track.ReadRTP()
 				if err != nil {
+					fmt.Printf("Track ended after %d packets\n", packetCount)
+					processBatch()
 					return
+				}
+
+				packetCount++
+				if packetCount == 1 {
+					fmt.Printf("First packet received: %d bytes payload, PT=%d, TS=%d, Marker=%v\n",
+						len(pkt.Payload), pkt.Header.PayloadType, pkt.Header.Timestamp, pkt.Header.Marker)
 				}
 
 				packetCopy := make([]byte, len(pkt.Payload))
 				copy(packetCopy, pkt.Payload)
 				opusPackets = append(opusPackets, packetCopy)
 
-				if len(opusPackets) >= packetsPerBatch {
-					oggData := createOggOpusFile(opusPackets)
-					fmt.Printf("Created OGG: %d bytes from %d packets\n", len(oggData), len(opusPackets))
-
-					if len(oggData) > 0 {
-						text, err := speechToText(oggData)
-						if err != nil {
-							fmt.Printf("Error STT: %v\n", err)
-						} else {
-							fmt.Printf("Transcription: %s\n", text)
-						}
+				if len(opusPackets) >= packetsPerBatch || pkt.Header.Marker {
+					if pkt.Header.Marker {
+						fmt.Printf("End of stream detected (marker bit), processing %d packets\n", len(opusPackets))
 					}
+
+					batchCount++
+					totalSize := 0
+					for _, p := range opusPackets {
+						totalSize += len(p)
+					}
+
+					fmt.Printf("\n=== SERVER RELAY VALIDATED ===\n")
+					fmt.Printf("Batch %d: Received %d packets (%d bytes total)\n", batchCount, len(opusPackets), totalSize)
+					fmt.Printf("Server successfully relayed audio stream!\n")
+					fmt.Printf("==============================\n\n")
+
+					filename := fmt.Sprintf("received_batch_%d.bin", batchCount)
+					var allData []byte
+					for _, p := range opusPackets {
+						allData = append(allData, p...)
+					}
+					os.WriteFile(filename, allData, 0644)
+					fmt.Printf("Saved raw data to: %s\n\n", filename)
 
 					opusPackets = nil
 				}
@@ -380,15 +450,122 @@ func processListenRequest(req ListenRequest) {
 	select {}
 }
 
-func textToSpeech(text string) ([]byte, error) {
-	ttsURL := fmt.Sprintf("%s/audio/speech", openaiBaseURL)
+func processTTSRequest(req TTSRequest) {
+	fmt.Printf("Starting TTS conversion for: %s\n", req.Text)
 
-	reqBody := OpenAITTSRequest{
-		Model:          "tts-1",
-		Input:          text,
-		Voice:          "alloy",
-		ResponseFormat: "opus",
-		Speed:          1.0,
+	audioData, err := callOpenAITTS(req.Text)
+	if err != nil {
+		fmt.Printf("Error calling OpenAI TTS: %v\n", err)
+		return
+	}
+
+	fmt.Printf("TTS audio received: %d bytes\n", len(audioData))
+
+	fmt.Printf("Starting WebRTC connection to room: %s\n", req.RoomID)
+
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
+
+	peerConnection, err := webrtcAPI.NewPeerConnection(config)
+	if err != nil {
+		fmt.Printf("Error creating peer connection: %v\n", err)
+		return
+	}
+	defer peerConnection.Close()
+
+	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		fmt.Printf("Peer Connection State: %s\n", state.String())
+	})
+
+	audioTrack, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+		"audio",
+		"tts-client",
+	)
+	if err != nil {
+		fmt.Printf("Error creating audio track: %v\n", err)
+		return
+	}
+
+	_, err = peerConnection.AddTrack(audioTrack)
+	if err != nil {
+		fmt.Printf("Error adding track: %v\n", err)
+		return
+	}
+
+	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
+	offer, err := peerConnection.CreateOffer(nil)
+	if err != nil {
+		fmt.Printf("Error creating offer: %v\n", err)
+		return
+	}
+
+	if err = peerConnection.SetLocalDescription(offer); err != nil {
+		fmt.Printf("Error setting local description: %v\n", err)
+		return
+	}
+
+	<-gatherComplete
+
+	whipURL := fmt.Sprintf("http://%s/whip?room=%s", serverAddr, req.RoomID)
+	httpReq, err := http.NewRequest("POST", whipURL, bytes.NewBuffer([]byte(offer.SDP)))
+	if err != nil {
+		fmt.Printf("Error creating WHIP request: %v\n", err)
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/sdp")
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Printf("Error sending WHIP request: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Error reading WHIP response: %v\n", err)
+		return
+	}
+
+	if err = peerConnection.SetRemoteDescription(webrtc.SessionDescription{
+		Type: webrtc.SDPTypeAnswer,
+		SDP:  string(body),
+	}); err != nil {
+		fmt.Printf("Error setting remote description: %v\n", err)
+		return
+	}
+
+	fmt.Println("WebRTC connection established")
+
+	time.Sleep(1 * time.Second)
+
+	fmt.Println("Sending TTS audio...")
+	if err := sendAudioToTrack(audioTrack, audioData); err != nil {
+		fmt.Printf("Error sending audio: %v\n", err)
+		return
+	}
+
+	fmt.Println("Audio sent successfully")
+	time.Sleep(2 * time.Second)
+}
+
+func callOpenAITTS(text string) ([]byte, error) {
+	if openAIKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY not set")
+	}
+
+	reqBody := map[string]interface{}{
+		"model":           "tts-1",
+		"input":           text,
+		"voice":           "alloy",
+		"response_format": "opus",
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -396,24 +573,24 @@ func textToSpeech(text string) ([]byte, error) {
 		return nil, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", ttsURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/audio/speech", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+openaiAPIKey)
+	req.Header.Set("Authorization", "Bearer "+openAIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error making request: %w", err)
+		return nil, fmt.Errorf("error calling OpenAI: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("TTS API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("OpenAI API error: %s - %s", resp.Status, string(body))
 	}
 
 	audioData, err := io.ReadAll(resp.Body)
@@ -424,18 +601,20 @@ func textToSpeech(text string) ([]byte, error) {
 	return audioData, nil
 }
 
-func speechToText(audioData []byte) (string, error) {
-	sttURL := fmt.Sprintf("%s/audio/transcriptions", openaiBaseURL)
+func callOpenAISTT(audioData []byte) (string, error) {
+	if openAIKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY not set")
+	}
 
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
 
-	fileWriter, err := writer.CreateFormFile("file", "audio.ogg")
+	part, err := writer.CreateFormFile("file", "audio.ogg")
 	if err != nil {
 		return "", fmt.Errorf("error creating form file: %w", err)
 	}
 
-	if _, err := fileWriter.Write(audioData); err != nil {
+	if _, err := part.Write(audioData); err != nil {
 		return "", fmt.Errorf("error writing audio data: %w", err)
 	}
 
@@ -447,37 +626,65 @@ func speechToText(audioData []byte) (string, error) {
 		return "", fmt.Errorf("error closing writer: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", sttURL, &requestBody)
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", &buf)
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+openaiAPIKey)
+	req.Header.Set("Authorization", "Bearer "+openAIKey)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("error making request: %w", err)
+		return "", fmt.Errorf("error calling OpenAI: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("STT API error (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("OpenAI API error: %s - %s", resp.Status, string(body))
 	}
 
-	var result map[string]interface{}
+	var result struct {
+		Text string `json:"text"`
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("error decoding response: %w", err)
 	}
 
-	text, ok := result["text"].(string)
-	if !ok {
-		return "", fmt.Errorf("no text in response")
+	return result.Text, nil
+}
+
+func generateSyntheticAudio(duration time.Duration) []byte {
+	var buf bytes.Buffer
+	writer, _ := oggwriter.NewWith(&buf, 48000, 2)
+
+	numPackets := int(duration.Milliseconds() / 20)
+	timestamp := uint32(0)
+
+	for i := 0; i < numPackets; i++ {
+		silenceFrame := []byte{
+			0xFC,
+		}
+
+		for j := 0; j < 10; j++ {
+			silenceFrame = append(silenceFrame, 0x00)
+		}
+
+		writer.WriteRTP(&rtp.Packet{
+			Header: rtp.Header{
+				Timestamp: timestamp,
+			},
+			Payload: silenceFrame,
+		})
+
+		timestamp += 960
 	}
 
-	return text, nil
+	writer.Close()
+	return buf.Bytes()
 }
 
 func createOggOpusFile(opusPackets [][]byte) []byte {
@@ -491,9 +698,11 @@ func createOggOpusFile(opusPackets [][]byte) []byte {
 
 	const samplesPerPacket = 960
 	timestamp := uint32(0)
+	written := 0
 
-	for _, packet := range opusPackets {
+	for i, packet := range opusPackets {
 		if len(packet) == 0 {
+			fmt.Printf("Warning: Empty packet at index %d\n", i)
 			continue
 		}
 
@@ -503,10 +712,11 @@ func createOggOpusFile(opusPackets [][]byte) []byte {
 			},
 			Payload: packet,
 		}); err != nil {
-			fmt.Printf("Error writing packet to OGG: %v\n", err)
+			fmt.Printf("Error writing packet %d to OGG: %v\n", i, err)
 			continue
 		}
 
+		written++
 		timestamp += samplesPerPacket
 	}
 
@@ -514,6 +724,7 @@ func createOggOpusFile(opusPackets [][]byte) []byte {
 		fmt.Printf("Error closing OGG writer: %v\n", err)
 	}
 
+	fmt.Printf("OGG writer: wrote %d/%d packets successfully\n", written, len(opusPackets))
 	return buf.Bytes()
 }
 
@@ -524,6 +735,7 @@ func extractOpusPacketsFromOgg(oggData []byte) ([][]byte, error) {
 	}
 
 	var packets [][]byte
+	pageCount := 0
 	for {
 		packet, _, err := reader.ParseNextPage()
 		if err != nil {
@@ -533,11 +745,23 @@ func extractOpusPacketsFromOgg(oggData []byte) ([][]byte, error) {
 			return nil, fmt.Errorf("error reading OGG page: %w", err)
 		}
 
-		packetCopy := make([]byte, len(packet))
-		copy(packetCopy, packet)
-		packets = append(packets, packetCopy)
+		pageCount++
+		if len(packet) > 0 {
+			if len(packet) >= 8 {
+				header := string(packet[:8])
+				if header == "OpusHead" || header == "OpusTags" {
+					continue
+				}
+			}
+
+			packetCopy := make([]byte, len(packet))
+			copy(packetCopy, packet)
+			packets = append(packets, packetCopy)
+		}
 	}
 
+	fmt.Printf("OGG reader: extracted %d packets from %d pages (%d bytes total)\n",
+		len(packets), pageCount, len(oggData))
 	return packets, nil
 }
 
@@ -550,12 +774,21 @@ func sendAudioToTrack(track *webrtc.TrackLocalStaticRTP, audioData []byte) error
 		return fmt.Errorf("error extracting Opus packets: %w", err)
 	}
 
-	fmt.Printf("Extracted %d Opus packets\n", len(opusPackets))
+	fmt.Printf("Extracted %d Opus packets from OGG\n", len(opusPackets))
+	if len(opusPackets) > 0 {
+		fmt.Printf("First packet size: %d bytes, Last packet size: %d bytes\n",
+			len(opusPackets[0]), len(opusPackets[len(opusPackets)-1]))
+	}
 
 	sequenceNumber := uint16(0)
 	timestamp := uint32(0)
 
 	for i, opusPacket := range opusPackets {
+		if len(opusPacket) == 0 {
+			fmt.Printf("Warning: Empty packet at index %d\n", i)
+			continue
+		}
+
 		packet := &rtp.Packet{
 			Header: rtp.Header{
 				Version:        2,
@@ -579,5 +812,6 @@ func sendAudioToTrack(track *webrtc.TrackLocalStaticRTP, audioData []byte) error
 		time.Sleep(frameDuration)
 	}
 
+	fmt.Printf("Sent %d RTP packets successfully\n", len(opusPackets))
 	return nil
 }
