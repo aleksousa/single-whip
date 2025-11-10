@@ -1,14 +1,11 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
 
-	"github.com/pion/interceptor"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -45,36 +42,12 @@ var roomManager = &RoomManager{
 }
 
 func main() {
-	settingEngine := webrtc.SettingEngine{}
-	settingEngine.SetNetworkTypes([]webrtc.NetworkType{
-		webrtc.NetworkTypeUDP4,
-		webrtc.NetworkTypeUDP6,
-	})
-
 	mediaEngine := &webrtc.MediaEngine{}
-	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:     webrtc.MimeTypeOpus,
-			ClockRate:    48000,
-			Channels:     2,
-			SDPFmtpLine:  "minptime=10;useinbandfec=1",
-			RTCPFeedback: nil,
-		},
-		PayloadType: 111,
-	}, webrtc.RTPCodecTypeAudio); err != nil {
+	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
 		panic(err)
 	}
 
-	interceptorRegistry := &interceptor.Registry{}
-	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
-		panic(err)
-	}
-
-	webrtcAPI = webrtc.NewAPI(
-		webrtc.WithMediaEngine(mediaEngine),
-		webrtc.WithInterceptorRegistry(interceptorRegistry),
-		webrtc.WithSettingEngine(settingEngine),
-	)
+	webrtcAPI = webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
 
 	http.HandleFunc("/whip", whipHandler)
 
@@ -112,11 +85,7 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 	}
 
 	audioTrack, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeOpus,
-			ClockRate: 48000,
-			Channels:  2,
-		},
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
 		"audio",
 		"pion",
 	)
@@ -125,20 +94,11 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	rtpSender, err := peerConnection.AddTrack(audioTrack)
+	_, err = peerConnection.AddTrack(audioTrack)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	go func() {
-		rtcpBuf := make([]byte, 4096)
-		for {
-			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
-				return
-			}
-		}
-	}()
 
 	peer := &Peer{
 		PeerConnection: peerConnection,
@@ -215,52 +175,13 @@ func connectPeers(source *Peer, destination *Peer) {
 		fmt.Printf("Audio relay: %s\n", track.ID())
 
 		go func() {
-			rtcpBuf := make([]byte, 4096)
-			for {
-				if _, _, err := receiver.Read(rtcpBuf); err != nil {
-					if errors.Is(err, io.EOF) {
-						return
-					}
-					return
-				}
-			}
-		}()
-
-		go func() {
 			for {
 				pkt, _, err := track.ReadRTP()
 				if err != nil {
-					if errors.Is(err, io.EOF) {
-						return
-					}
-					fmt.Printf("RTP read error: %s\n", err.Error())
 					return
 				}
 
-				if track.Kind() != webrtc.RTPCodecTypeAudio {
-					continue
-				}
-
-				if len(pkt.Payload) == 0 {
-					continue
-				}
-
-				newPkt := &rtp.Packet{
-					Header: rtp.Header{
-						Version:        2,
-						Padding:        false,
-						Extension:      false,
-						Marker:         pkt.Header.Marker,
-						PayloadType:    pkt.Header.PayloadType,
-						SequenceNumber: pkt.Header.SequenceNumber,
-						Timestamp:      pkt.Header.Timestamp,
-						SSRC:           pkt.Header.SSRC,
-					},
-					Payload: pkt.Payload,
-				}
-
-				if err = destination.AudioTrack.WriteRTP(newPkt); err != nil {
-					fmt.Printf("Error relaying audio: %s\n", err.Error())
+				if err = destination.AudioTrack.WriteRTP(pkt); err != nil {
 					return
 				}
 			}

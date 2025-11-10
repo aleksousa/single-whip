@@ -159,11 +159,7 @@ func processSpeakRequest(req SpeakRequest) {
 	})
 
 	audioTrack, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeOpus,
-			ClockRate: 48000,
-			Channels:  2,
-		},
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
 		"audio",
 		"tts-client",
 	)
@@ -172,20 +168,11 @@ func processSpeakRequest(req SpeakRequest) {
 		return
 	}
 
-	rtpSender, err := peerConnection.AddTrack(audioTrack)
+	_, err = peerConnection.AddTrack(audioTrack)
 	if err != nil {
 		fmt.Printf("Error adding track: %v\n", err)
 		return
 	}
-
-	go func() {
-		rtcpBuf := make([]byte, 4096)
-		for {
-			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
-				return
-			}
-		}
-	}()
 
 	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
 	offer, err := peerConnection.CreateOffer(nil)
@@ -294,11 +281,7 @@ func processListenRequest(req ListenRequest) {
 	})
 
 	audioTrack, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeOpus,
-			ClockRate: 48000,
-			Channels:  2,
-		},
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
 		"audio",
 		"listener-client",
 	)
@@ -307,20 +290,11 @@ func processListenRequest(req ListenRequest) {
 		return
 	}
 
-	rtpSender, err := peerConnection.AddTrack(audioTrack)
+	_, err = peerConnection.AddTrack(audioTrack)
 	if err != nil {
 		fmt.Printf("Error adding track: %v\n", err)
 		return
 	}
-
-	go func() {
-		rtcpBuf := make([]byte, 4096)
-		for {
-			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
-				return
-			}
-		}
-	}()
 
 	var opusPackets [][]byte
 	var audioMutex sync.Mutex
@@ -611,7 +585,7 @@ func sendAudioToTrack(track *webrtc.TrackLocalStaticRTP, audioData []byte) error
 				Padding:        false,
 				Extension:      false,
 				Marker:         i == len(opusPackets)-1,
-				PayloadType:    111,
+				PayloadType:    96,
 				SequenceNumber: sequenceNumber,
 				Timestamp:      timestamp,
 				SSRC:           0,
