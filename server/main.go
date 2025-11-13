@@ -94,9 +94,11 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 	}
 
 	audioTrack, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+		webrtc.RTPCodecCapability{
+			MimeType: webrtc.MimeTypeOpus,
+		},
 		"audio",
-		"pion",
+		"tts-client",
 	)
 	if err != nil {
 		http.Error(res, err.Error(), http.StatusInternalServerError)
@@ -118,11 +120,8 @@ func whipHandler(res http.ResponseWriter, req *http.Request) {
 	otherPeer := room.addPeer(peer)
 
 	if otherPeer != nil {
-		fmt.Printf("Pairing peers in room %s\n", roomID)
 		connectPeers(peer, otherPeer)
 		connectPeers(otherPeer, peer)
-	} else {
-		fmt.Printf("Peer waiting in room %s\n", roomID)
 	}
 
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
@@ -181,20 +180,16 @@ func (r *Room) removePeer(peer *Peer) {
 
 func connectPeers(source *Peer, destination *Peer) {
 	source.PeerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		fmt.Printf("Audio relay: %s\n", track.ID())
-
-		go func() {
-			for {
-				pkt, _, err := track.ReadRTP()
-				if err != nil {
-					return
-				}
-
-				if err = destination.AudioTrack.WriteRTP(pkt); err != nil {
-					return
-				}
+		for {
+			pkt, _, err := track.ReadRTP()
+			if err != nil {
+				break
 			}
-		}()
+
+			if err = destination.AudioTrack.WriteRTP(pkt); err != nil {
+				break
+			}
+		}
 	})
 }
 

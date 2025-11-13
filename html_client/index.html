@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Voice Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            color: #555;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+
+        #connectBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #connectBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        #connectBtn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        #disconnectBtn {
+            background: #e74c3c;
+            color: white;
+            display: none;
+        }
+
+        #disconnectBtn:hover {
+            background: #c0392b;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(231, 76, 60, 0.3);
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: 600;
+            display: none;
+        }
+
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+            display: block;
+        }
+
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+            display: block;
+        }
+
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+            display: block;
+        }
+
+        .status.warning {
+            background: #fff3e0;
+            color: #f57c00;
+            display: block;
+        }
+
+        .audio-indicator {
+            display: none;
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .audio-indicator.active {
+            display: block;
+        }
+
+        .audio-wave {
+            display: inline-block;
+            width: 10px;
+            height: 30px;
+            background: #667eea;
+            margin: 0 3px;
+            border-radius: 5px;
+            animation: wave 1s ease-in-out infinite;
+        }
+
+        .audio-wave:nth-child(2) {
+            animation-delay: 0.1s;
+        }
+
+        .audio-wave:nth-child(3) {
+            animation-delay: 0.2s;
+        }
+
+        .audio-wave:nth-child(4) {
+            animation-delay: 0.3s;
+        }
+
+        .audio-wave:nth-child(5) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes wave {
+            0%, 100% {
+                transform: scaleY(0.5);
+            }
+            50% {
+                transform: scaleY(1.5);
+            }
+        }
+
+        .note {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            font-size: 12px;
+            color: #666;
+            line-height: 1.5;
+        }
+
+        .note strong {
+            color: #333;
+        }
+
+        .debug-console {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1e1e1e;
+            border-radius: 10px;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            max-height: 300px;
+            overflow-y: auto;
+            line-height: 1.4;
+        }
+
+        .debug-console div {
+            margin: 2px 0;
+        }
+
+        .debug-console .error {
+            color: #ff6b6b;
+        }
+
+        .debug-console .warning {
+            color: #ffd93d;
+        }
+
+        .debug-console .success {
+            color: #6bcf7f;
+        }
+
+        .debug-console .info {
+            color: #74b9ff;
+        }
+
+        .stats {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+
+        .stats-label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .stats-value {
+            color: #333;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebRTC Voice Client</h1>
+
+        <div class="form-group">
+            <label for="serverUrl">URL do Servidor</label>
+            <input type="text" id="serverUrl" placeholder="http://localhost:8080" value="http://localhost:8080">
+        </div>
+
+        <div class="form-group">
+            <label for="roomId">ID da Sala</label>
+            <input type="text" id="roomId" placeholder="room123" value="room123">
+        </div>
+
+        <button id="connectBtn">Conectar</button>
+        <button id="disconnectBtn">Desconectar</button>
+
+        <div id="status" class="status"></div>
+
+        <div id="audioIndicator" class="audio-indicator">
+            <div class="audio-wave"></div>
+            <div class="audio-wave"></div>
+            <div class="audio-wave"></div>
+            <div class="audio-wave"></div>
+            <div class="audio-wave"></div>
+        </div>
+
+        <div class="stats" id="stats" style="display: none;">
+            <strong>Estatísticas WebRTC</strong>
+            <div class="stats-row">
+                <span class="stats-label">Tracks Remotos:</span>
+                <span class="stats-value" id="statRemoteTracks">0</span>
+            </div>
+            <div class="stats-row">
+                <span class="stats-label">Pacotes RTP Recebidos:</span>
+                <span class="stats-value" id="statPacketsReceived">0</span>
+            </div>
+            <div class="stats-row">
+                <span class="stats-label">Bytes Recebidos:</span>
+                <span class="stats-value" id="statBytesReceived">0</span>
+            </div>
+            <div class="stats-row">
+                <span class="stats-label">Audio Elements:</span>
+                <span class="stats-value" id="statAudioElements">0</span>
+            </div>
+        </div>
+
+        <div class="debug-console" id="debugConsole"></div>
+
+        <div class="note">
+            <strong>Nota:</strong> Este cliente captura áudio do seu microfone e estabelece uma conexão WebRTC
+            com o servidor. Certifique-se de que o servidor está rodando e aceite a permissão de acesso ao microfone
+            quando solicitado pelo navegador.
+        </div>
+    </div>
+
+    <!-- Container para áudio remoto -->
+    <div id="audioContainer"></div>
+
+    <script>
+        let peerConnection = null;
+        let localStream = null;
+        let audioTrack = null;
+        let remoteAudioElements = [];
+        let statsInterval = null;
+        let remoteTrackCount = 0;
+
+        const serverUrlInput = document.getElementById('serverUrl');
+        const roomIdInput = document.getElementById('roomId');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const statusDiv = document.getElementById('status');
+        const audioIndicator = document.getElementById('audioIndicator');
+        const debugConsole = document.getElementById('debugConsole');
+        const statsDiv = document.getElementById('stats');
+        const audioContainer = document.getElementById('audioContainer');
+
+        const iceServers = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        };
+
+        function debugLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString('pt-BR', { hour12: false, fractionalSecondDigits: 3 });
+            const logEntry = document.createElement('div');
+            logEntry.className = type;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            debugConsole.appendChild(logEntry);
+            debugConsole.scrollTop = debugConsole.scrollHeight;
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+
+        function updateStatus(message, type = 'info') {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            debugLog(message, type);
+        }
+
+        async function getMicrophoneStream() {
+            try {
+                updateStatus('Solicitando acesso ao microfone...', 'info');
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    },
+                    video: false
+                });
+                updateStatus('Microfone capturado com sucesso', 'success');
+                return stream;
+            } catch (error) {
+                updateStatus(`Erro ao acessar microfone: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        async function createPeerConnection() {
+            try {
+                peerConnection = new RTCPeerConnection(iceServers);
+
+                peerConnection.oniceconnectionstatechange = () => {
+                    console.log('ICE Connection State:', peerConnection.iceConnectionState);
+                    updateStatus(`Estado ICE: ${peerConnection.iceConnectionState}`, 'info');
+
+                    if (peerConnection.iceConnectionState === 'failed') {
+                        updateStatus('Falha na conexão ICE', 'error');
+                        disconnect();
+                    }
+                };
+
+                peerConnection.onconnectionstatechange = () => {
+                    console.log('Connection State:', peerConnection.connectionState);
+                    updateStatus(`Estado da conexão: ${peerConnection.connectionState}`, 'info');
+
+                    if (peerConnection.connectionState === 'connected') {
+                        updateStatus('Conectado! Áudio sendo transmitido', 'success');
+                        audioIndicator.classList.add('active');
+                    } else if (peerConnection.connectionState === 'failed' ||
+                               peerConnection.connectionState === 'closed') {
+                        audioIndicator.classList.remove('active');
+                        if (peerConnection.connectionState === 'failed') {
+                            updateStatus('Conexão falhou', 'error');
+                        }
+                    }
+                };
+
+                peerConnection.ontrack = (event) => {
+                    remoteTrackCount++;
+                    debugLog(`[ONTRACK] Received remote track #${remoteTrackCount}`, 'success');
+                    debugLog(`  Track kind: ${event.track.kind}`, 'info');
+                    debugLog(`  Track id: ${event.track.id}`, 'info');
+                    debugLog(`  Track label: ${event.track.label}`, 'info');
+                    debugLog(`  Track enabled: ${event.track.enabled}`, 'info');
+                    debugLog(`  Track muted: ${event.track.muted}`, 'info');
+                    debugLog(`  Track readyState: ${event.track.readyState}`, 'info');
+                    debugLog(`  Streams count: ${event.streams.length}`, 'info');
+
+                    if (event.streams.length > 0) {
+                        debugLog(`  Stream id: ${event.streams[0].id}`, 'info');
+                        debugLog(`  Stream active: ${event.streams[0].active}`, 'info');
+                        debugLog(`  Stream tracks: ${event.streams[0].getTracks().length}`, 'info');
+                    }
+
+                    if (event.track.kind === 'audio') {
+                        updateStatus(`Recebendo áudio remoto (Track #${remoteTrackCount})`, 'success');
+
+                        // Create audio element
+                        const remoteAudio = new Audio();
+                        remoteAudio.autoplay = true;
+                        remoteAudio.controls = false;
+                        remoteAudio.volume = 1.0;
+                        remoteAudio.id = `remoteAudio_${remoteTrackCount}`;
+
+                        debugLog(`[AUDIO] Creating audio element: ${remoteAudio.id}`, 'info');
+
+                        // Set srcObject
+                        const remoteStream = new MediaStream();
+                        remoteStream.addTrack(event.track);
+                        remoteAudio.srcObject = remoteStream;
+
+                        // Monitor track events
+                        event.track.onended = () => {
+                            debugLog(`[TRACK] Track ended: ${event.track.id}`, 'warning');
+                        };
+
+                        event.track.onmute = () => {
+                            debugLog(`[TRACK] Track muted: ${event.track.id}`, 'warning');
+                        };
+
+                        event.track.onunmute = () => {
+                            debugLog(`[TRACK] Track unmuted: ${event.track.id}`, 'success');
+                        };
+
+                        // Monitor audio element events
+                        remoteAudio.onloadedmetadata = () => {
+                            debugLog(`[AUDIO] Metadata loaded for: ${remoteAudio.id}`, 'success');
+                        };
+
+                        remoteAudio.oncanplay = () => {
+                            debugLog(`[AUDIO] Can play: ${remoteAudio.id}`, 'success');
+                        };
+
+                        remoteAudio.onplaying = () => {
+                            debugLog(`[AUDIO] Playing: ${remoteAudio.id}`, 'success');
+                        };
+
+                        remoteAudio.onpause = () => {
+                            debugLog(`[AUDIO] Paused: ${remoteAudio.id}`, 'warning');
+                        };
+
+                        remoteAudio.onerror = (err) => {
+                            debugLog(`[AUDIO] Error on ${remoteAudio.id}: ${err}`, 'error');
+                        };
+
+                        // Try to play
+                        remoteAudio.play()
+                            .then(() => {
+                                debugLog(`[AUDIO] Successfully started playback: ${remoteAudio.id}`, 'success');
+                                updateStatus(`Áudio remoto reproduzindo (${remoteAudio.id})`, 'success');
+                            })
+                            .catch(err => {
+                                debugLog(`[AUDIO] Error playing ${remoteAudio.id}: ${err.name} - ${err.message}`, 'error');
+                                updateStatus(`Erro ao reproduzir áudio: ${err.message}`, 'error');
+
+                                // Try to enable audio on user interaction
+                                document.addEventListener('click', function enableAudio() {
+                                    remoteAudio.play()
+                                        .then(() => {
+                                            debugLog('[AUDIO] Playback enabled after user interaction', 'success');
+                                            document.removeEventListener('click', enableAudio);
+                                        })
+                                        .catch(e => debugLog(`[AUDIO] Still failed: ${e.message}`, 'error'));
+                                }, { once: true });
+                            });
+
+                        // Add to DOM and tracking array
+                        audioContainer.appendChild(remoteAudio);
+                        remoteAudioElements.push(remoteAudio);
+
+                        debugLog(`[AUDIO] Audio element added to DOM. Total: ${remoteAudioElements.length}`, 'info');
+                    } else {
+                        debugLog(`[TRACK] Ignoring non-audio track: ${event.track.kind}`, 'warning');
+                    }
+
+                    document.getElementById('statRemoteTracks').textContent = remoteTrackCount;
+                    document.getElementById('statAudioElements').textContent = remoteAudioElements.length;
+                };
+
+                localStream = await getMicrophoneStream();
+                audioTrack = localStream.getAudioTracks()[0];
+
+                peerConnection.addTrack(audioTrack, localStream);
+                console.log('Local audio track added to peer connection');
+
+                return peerConnection;
+            } catch (error) {
+                updateStatus(`Erro ao criar peer connection: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        async function sendOfferToServer(offer, serverUrl, roomId) {
+            try {
+                updateStatus('Enviando offer para servidor...', 'info');
+                const whipUrl = `${serverUrl}/whip?room=${roomId}`;
+
+                console.log('Sending offer to:', whipUrl);
+                console.log('Offer SDP:', offer.sdp);
+
+                const response = await fetch(whipUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/sdp'
+                    },
+                    body: offer.sdp
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server responded with status: ${response.status}`);
+                }
+
+                const answerSdp = await response.text();
+                console.log('Received answer SDP:', answerSdp);
+
+                updateStatus('Answer recebido do servidor', 'success');
+                return answerSdp;
+            } catch (error) {
+                updateStatus(`Erro ao comunicar com servidor: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        async function connect() {
+            const serverUrl = serverUrlInput.value.trim();
+            const roomId = roomIdInput.value.trim();
+
+            if (!serverUrl || !roomId) {
+                updateStatus('Por favor, preencha a URL do servidor e o ID da sala', 'error');
+                return;
+            }
+
+            try {
+                connectBtn.disabled = true;
+                serverUrlInput.disabled = true;
+                roomIdInput.disabled = true;
+
+                updateStatus('Iniciando conexão...', 'info');
+
+                await createPeerConnection();
+
+                updateStatus('Criando offer SDP...', 'info');
+                const offer = await peerConnection.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: false
+                });
+
+                await peerConnection.setLocalDescription(offer);
+                console.log('Local description set');
+
+                await new Promise((resolve) => {
+                    if (peerConnection.iceGatheringState === 'complete') {
+                        resolve();
+                    } else {
+                        peerConnection.addEventListener('icegatheringstatechange', () => {
+                            if (peerConnection.iceGatheringState === 'complete') {
+                                resolve();
+                            }
+                        });
+                    }
+                });
+
+                console.log('ICE gathering complete');
+                updateStatus('ICE gathering completo', 'info');
+
+                const answerSdp = await sendOfferToServer(peerConnection.localDescription, serverUrl, roomId);
+
+                await peerConnection.setRemoteDescription({
+                    type: 'answer',
+                    sdp: answerSdp
+                });
+
+                debugLog('Remote description set', 'success');
+                updateStatus('Aguardando estabelecimento da conexão...', 'info');
+
+                // Show stats panel and start monitoring
+                statsDiv.style.display = 'block';
+                startStatsMonitoring();
+
+                connectBtn.style.display = 'none';
+                disconnectBtn.style.display = 'block';
+
+            } catch (error) {
+                console.error('Connection error:', error);
+                updateStatus(`Erro na conexão: ${error.message}`, 'error');
+                disconnect();
+            }
+        }
+
+        function startStatsMonitoring() {
+            if (statsInterval) {
+                clearInterval(statsInterval);
+            }
+
+            debugLog('Starting stats monitoring', 'info');
+
+            statsInterval = setInterval(async () => {
+                if (!peerConnection) return;
+
+                try {
+                    const stats = await peerConnection.getStats();
+                    let totalPacketsReceived = 0;
+                    let totalBytesReceived = 0;
+
+                    stats.forEach(report => {
+                        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                            totalPacketsReceived += report.packetsReceived || 0;
+                            totalBytesReceived += report.bytesReceived || 0;
+
+                            if (report.packetsReceived > 0) {
+                                debugLog(`[RTP] Packets: ${report.packetsReceived}, Bytes: ${report.bytesReceived}, Lost: ${report.packetsLost || 0}`, 'info');
+                            }
+                        }
+                    });
+
+                    document.getElementById('statPacketsReceived').textContent = totalPacketsReceived;
+                    document.getElementById('statBytesReceived').textContent = totalBytesReceived;
+
+                    if (totalPacketsReceived > 0 && totalBytesReceived === 0) {
+                        debugLog('[WARNING] Receiving packets but no bytes - possible issue', 'warning');
+                    }
+
+                } catch (error) {
+                    debugLog(`[STATS] Error getting stats: ${error.message}`, 'error');
+                }
+            }, 1000);
+        }
+
+        function disconnect() {
+            debugLog('Disconnecting...', 'warning');
+
+            // Stop stats monitoring
+            if (statsInterval) {
+                clearInterval(statsInterval);
+                statsInterval = null;
+            }
+
+            // Close peer connection
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+
+            // Stop local stream
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+
+            // Remove all remote audio elements
+            remoteAudioElements.forEach(audio => {
+                audio.pause();
+                audio.srcObject = null;
+                audio.remove();
+            });
+            remoteAudioElements = [];
+
+            audioTrack = null;
+            remoteTrackCount = 0;
+            audioIndicator.classList.remove('active');
+            statsDiv.style.display = 'none';
+
+            // Clear debug console
+            debugConsole.innerHTML = '';
+
+            // Reset stats
+            document.getElementById('statRemoteTracks').textContent = '0';
+            document.getElementById('statPacketsReceived').textContent = '0';
+            document.getElementById('statBytesReceived').textContent = '0';
+            document.getElementById('statAudioElements').textContent = '0';
+
+            connectBtn.disabled = false;
+            serverUrlInput.disabled = false;
+            roomIdInput.disabled = false;
+            connectBtn.style.display = 'block';
+            disconnectBtn.style.display = 'none';
+
+            updateStatus('Desconectado', 'info');
+        }
+
+        connectBtn.addEventListener('click', connect);
+        disconnectBtn.addEventListener('click', disconnect);
+    </script>
+</body>
+</html>
